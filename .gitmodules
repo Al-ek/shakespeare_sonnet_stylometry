@@ -1,0 +1,3 @@
+[submodule "shakespeare_sonnet_stylometry_data"]
+	path = shakespeare_sonnet_stylometry_data
+	url = git@github.com:Al-ek/shakespeare_sonnet_stylometry_data.git
