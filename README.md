@@ -1,5 +1,6 @@
 # Shakespeare Sonnet LLM Stylometry
 This project attempts to statistically analyze, using stylometry, how close LLMs can come to mimicking the writing style of an author. 
+
 Here, we use the public doamin sonnets of Shakespeare and the outputs of pretrained and base LLM models to analyze how close the LLMs can come to mimicking Shakespeare 
 
 ## Clone repo with data submodule
