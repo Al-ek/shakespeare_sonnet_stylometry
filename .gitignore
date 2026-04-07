@@ -1,3 +1,6 @@
 venv
 data
+__pycache__
+model_training_dataset
+sonnet_model.pkl
 
