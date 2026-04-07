@@ -1,6 +1,7 @@
 venv
 data
 __pycache__
-model_training_dataset
+model_dataset.csv
 sonnet_model.pkl
+
 

@@ -8,7 +8,7 @@ import os
 def train():
 
     if os.path.exists("sonnet_model.pkl"):
-            os.remove("sonnet_model.pkl")
+        os.remove("sonnet_model.pkl")
 
     df = pandas.read_csv("model_dataset.csv")
 
@@ -23,7 +23,7 @@ def train():
     )
 
     model = RandomForestClassifier(
-        n_estimators=1000,
+        n_estimators=5000,
         random_state=42,
         n_jobs=-1
     )

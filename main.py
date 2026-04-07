@@ -1,4 +1,5 @@
 from pathlib import Path
+import matplotlib.pyplot as plt
 import re
 import nltk
 import delta
@@ -12,6 +13,7 @@ import train
 
 BY_AUTHOR_SONNET_CORPUS = Path("by_author_sonnet_corpus")
 MODEL_TRAINING_SONNETS = Path("model_training_sonnets")
+MODEL_EVALUATION_SONNETS = Path("model_evaluation_sonnets")
 MODEL_TRAINING_DATASET_FILE = "model_dataset.csv"
 
 roman_numerals = re.compile(r'^\s*[IVXLCDM]+\s*$', re.IGNORECASE | re.MULTILINE)
@@ -72,19 +74,17 @@ def add_to_csv(chi_results, delta_results, true_author):
         if not file_exists:
             writer.writeheader()
         writer.writerow(row)
-    print("Sample appended to dataset.")
-   
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--mode', type=str, default='predict-author', choices=['build-model-dataset','predict-author', 'train'])
+    parser.add_argument('-m', '--mode', type=str, default='predict-author', choices=['build-dataset','predict-author', 'train', 'evaluate-model', 'model-parameters'])
     args = parser.parse_args()
 
     by_author = extract_author_data()
     by_author_tokens = extract_author_data_tokens(by_author)
 
-    if args.mode == 'build-model-dataset':
+    if args.mode == 'build-dataset':
 
         if os.path.exists(MODEL_TRAINING_DATASET_FILE):
             os.remove(MODEL_TRAINING_DATASET_FILE)
@@ -105,8 +105,27 @@ if __name__ == "__main__":
         target_text_tokens = tokenize_target("Target.txt")
         chi_results =  chi.chi(authors, by_author_tokens, target_text_tokens)
         delta_results = delta.delta(authors, by_author_tokens, target_text_tokens)
+
         print("Chi results:", chi_results)
+        authors_list = list(chi_results.keys())
+        chi_values = list(chi_results.values())
+        plt.figure(figsize=(10, 6))
+        plt.barh(authors_list, chi_values)
+        plt.xticks(rotation=45)
+        plt.xlabel("Chi-squared Value")
+        plt.title("Chi-squared Comparison by Author")
+        plt.tight_layout()
+        
         print("Delta results:", delta_results)
+        authors_list = list(delta_results.keys())
+        delta_values = list(delta_results.values())
+        plt.figure(figsize=(10, 6))
+        plt.barh(authors_list, delta_values)
+        plt.xticks(rotation=45)
+        plt.xlabel("Delta Score Value")
+        plt.title("Delta Score Comparison by Author")
+        plt.tight_layout()
+        
 
         row = {}
         for author in authors:
@@ -119,9 +138,66 @@ if __name__ == "__main__":
         prediction = model.predict(X_new)[0]
 
         print("Predicted author:", prediction)
+        plt.show()
 
     if args.mode == 'train':
         train.train()
+
+    if args.mode == 'evaluate-model':
+        model = joblib.load("sonnet_model.pkl")
+        correct = 0
+        count = 0
+        for author in MODEL_EVALUATION_SONNETS.iterdir():
+                if author.is_dir():
+                    true_author = author.name
+                    print("Prediciting evaluation sonnets for", true_author)
+                    for file in author.iterdir():
+                        target_text_tokens = tokenize_target(file)
+
+                        chi_results =  chi.chi(authors, by_author_tokens, target_text_tokens)
+                        delta_results = delta.delta(authors, by_author_tokens, target_text_tokens)
+
+                        row = {}
+                        for author in authors:
+                            row[f"chi2_{author}"] = chi_results[author]
+
+                        for author in authors:
+                            row[f"delta_{author}"] = delta_results[author]
+
+                        X_new = pandas.DataFrame([row])
+                        prediction = model.predict(X_new)[0]
+
+                        count += 1
+                        if prediction == true_author:
+                            correct += 1
+        acc = correct / count
+        print("Accuracy:", acc)
+
+    if args.mode == 'model-parameters':
+        # Load trained model
+        model = joblib.load("sonnet_model.pkl")
+
+        # Load dataset to get feature names
+        df = pandas.read_csv("model_dataset.csv")
+        X = df.drop(columns=["true_author"])
+
+        # Get feature importances
+        importances = model.feature_importances_
+        feature_names = X.columns
+
+        # Create a sorted DataFrame
+        importance_df = pandas.DataFrame({
+            "feature": feature_names,
+            "importance": importances
+        }).sort_values(by="importance", ascending=False)
+
+        print(importance_df)
+
+
+
+                        
+
+
 
 
     
