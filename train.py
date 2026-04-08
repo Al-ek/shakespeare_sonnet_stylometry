@@ -23,7 +23,7 @@ def train():
     )
 
     model = RandomForestClassifier(
-        n_estimators=5000,
+        n_estimators=1000,
         random_state=42,
         n_jobs=-1
     )

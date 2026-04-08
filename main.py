@@ -4,6 +4,7 @@ import re
 import nltk
 import delta
 import chi
+import ngram
 import csv
 import argparse
 import joblib
@@ -22,11 +23,12 @@ roman_numerals = re.compile(r'^\s*[IVXLCDM]+\s*$', re.IGNORECASE | re.MULTILINE)
 # enter -1 for all
 character_count = -1
 
-authors = ("Gem", "Gemini", "Shakespeare", 
+authors = ("Gem", "Gemini", "Shakespeare",
            "ChatGPT", "Claude", "Copilot", "Preplexity")
 
+
 def tokenize_target(target_file):
-    with open(target_file, 'r') as file:
+    with open(target_file, 'r', encoding="utf-8") as file:
         target_text = file.read()
         target_text = roman_numerals.sub("", target_text)
         target_text = target_text.strip()
@@ -39,12 +41,13 @@ def extract_author_data():
     for author in BY_AUTHOR_SONNET_CORPUS.iterdir():
         file = author / "sonnets.txt"
         if file.exists():
-            text = file.read_text()
+            text = file.read_text(encoding="utf-8")
             # remove roman numerals
             text = roman_numerals.sub("", text)
             text = text.strip()
             by_author[author.name] = text[:character_count]
     return by_author
+
 
 def extract_author_data_tokens(by_author):
     by_author_tokens = {}
@@ -53,16 +56,23 @@ def extract_author_data_tokens(by_author):
         by_author_tokens[author] = ([token for token in tokens if any(c.isalpha() for c in token)])
     return by_author_tokens
 
-def add_to_csv(chi_results, delta_results, true_author):
+
+def add_to_csv(chi_results, delta_results, ngram_results, true_author):
 
     row = {}
 
     # enforce fixed author order
     for author in authors:
         row[f"chi2_{author}"] = chi_results[author]
-        
+
     for author in authors:
         row[f"delta_{author}"] = delta_results[author]
+
+    for author in authors:
+        row[f"ngram_3_{author}"] = ngram_results[author]["3gram"]
+        row[f"ngram_4_{author}"] = ngram_results[author]["4gram"]
+        row[f"ngram_5_{author}"] = ngram_results[author]["5gram"]
+        row[f"ngram_6_{author}"] = ngram_results[author]["6gram"]
 
     row["true_author"] = true_author
 
@@ -75,10 +85,12 @@ def add_to_csv(chi_results, delta_results, true_author):
             writer.writeheader()
         writer.writerow(row)
 
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--mode', type=str, default='predict-author', choices=['build-dataset','predict-author', 'train', 'evaluate-model', 'model-parameters'])
+    parser.add_argument('-m', '--mode', type=str, default='predict-author',
+                        choices=['build-dataset', 'predict-author', 'train', 'evaluate-model', 'model-parameters'])
     args = parser.parse_args()
 
     by_author = extract_author_data()
@@ -88,23 +100,29 @@ if __name__ == "__main__":
 
         if os.path.exists(MODEL_TRAINING_DATASET_FILE):
             os.remove(MODEL_TRAINING_DATASET_FILE)
+
         for author in MODEL_TRAINING_SONNETS.iterdir():
-                if author.is_dir():
-                    true_author = author.name
-                    print("Calculating scores for", true_author)
-                    for file in author.iterdir():
-                        target_text_tokens = tokenize_target(file)
+            if author.is_dir():
+                true_author = author.name
+                print("Calculating scores for", true_author)
+                for file in author.iterdir():
+                    target_text_tokens = tokenize_target(file)
+                    target_text = Path(file).read_text(encoding="utf-8")
 
-                        chi_results =  chi.chi(authors, by_author_tokens, target_text_tokens)
-                        delta_results = delta.delta(authors, by_author_tokens, target_text_tokens)
+                    chi_results = chi.chi(authors, by_author_tokens, target_text_tokens)
+                    delta_results = delta.delta(authors, by_author_tokens, target_text_tokens)
+                    ngram_results = ngram.ngram(authors, by_author, target_text)
 
-                        add_to_csv(chi_results, delta_results, true_author)
+                    add_to_csv(chi_results, delta_results, ngram_results, true_author)
 
     if args.mode == 'predict-author':
         model = joblib.load("sonnet_model.pkl")
         target_text_tokens = tokenize_target("Target.txt")
-        chi_results =  chi.chi(authors, by_author_tokens, target_text_tokens)
+        target_text = Path("Target.txt").read_text(encoding="utf-8")
+
+        chi_results = chi.chi(authors, by_author_tokens, target_text_tokens)
         delta_results = delta.delta(authors, by_author_tokens, target_text_tokens)
+        ngram_results = ngram.ngram(authors, by_author, target_text)
 
         print("Chi results:", chi_results)
         authors_list = list(chi_results.keys())
@@ -115,7 +133,7 @@ if __name__ == "__main__":
         plt.xlabel("Chi-squared Value")
         plt.title("Chi-squared Comparison by Author")
         plt.tight_layout()
-        
+
         print("Delta results:", delta_results)
         authors_list = list(delta_results.keys())
         delta_values = list(delta_results.values())
@@ -125,7 +143,8 @@ if __name__ == "__main__":
         plt.xlabel("Delta Score Value")
         plt.title("Delta Score Comparison by Author")
         plt.tight_layout()
-        
+
+        print("N-gram results:", ngram_results)
 
         row = {}
         for author in authors:
@@ -133,6 +152,12 @@ if __name__ == "__main__":
 
         for author in authors:
             row[f"delta_{author}"] = delta_results[author]
+
+        for author in authors:
+            row[f"ngram_3_{author}"] = ngram_results[author]["3gram"]
+            row[f"ngram_4_{author}"] = ngram_results[author]["4gram"]
+            row[f"ngram_5_{author}"] = ngram_results[author]["5gram"]
+            row[f"ngram_6_{author}"] = ngram_results[author]["6gram"]
 
         X_new = pandas.DataFrame([row])
         prediction = model.predict(X_new)[0]
@@ -148,28 +173,36 @@ if __name__ == "__main__":
         correct = 0
         count = 0
         for author in MODEL_EVALUATION_SONNETS.iterdir():
-                if author.is_dir():
-                    true_author = author.name
-                    print("Prediciting evaluation sonnets for", true_author)
-                    for file in author.iterdir():
-                        target_text_tokens = tokenize_target(file)
+            if author.is_dir():
+                true_author = author.name
+                print("Prediciting evaluation sonnets for", true_author)
+                for file in author.iterdir():
+                    target_text_tokens = tokenize_target(file)
+                    target_text = Path(file).read_text(encoding="utf-8")
 
-                        chi_results =  chi.chi(authors, by_author_tokens, target_text_tokens)
-                        delta_results = delta.delta(authors, by_author_tokens, target_text_tokens)
+                    chi_results = chi.chi(authors, by_author_tokens, target_text_tokens)
+                    delta_results = delta.delta(authors, by_author_tokens, target_text_tokens)
+                    ngram_results = ngram.ngram(authors, by_author, target_text)
 
-                        row = {}
-                        for author in authors:
-                            row[f"chi2_{author}"] = chi_results[author]
+                    row = {}
+                    for author in authors:
+                        row[f"chi2_{author}"] = chi_results[author]
 
-                        for author in authors:
-                            row[f"delta_{author}"] = delta_results[author]
+                    for author in authors:
+                        row[f"delta_{author}"] = delta_results[author]
 
-                        X_new = pandas.DataFrame([row])
-                        prediction = model.predict(X_new)[0]
+                    for author in authors:
+                        row[f"ngram_3_{author}"] = ngram_results[author]["3gram"]
+                        row[f"ngram_4_{author}"] = ngram_results[author]["4gram"]
+                        row[f"ngram_5_{author}"] = ngram_results[author]["5gram"]
+                        row[f"ngram_6_{author}"] = ngram_results[author]["6gram"]
 
-                        count += 1
-                        if prediction == true_author:
-                            correct += 1
+                    X_new = pandas.DataFrame([row])
+                    prediction = model.predict(X_new)[0]
+
+                    count += 1
+                    if prediction == true_author:
+                        correct += 1
         acc = correct / count
         print("Accuracy:", acc)
 
@@ -192,12 +225,3 @@ if __name__ == "__main__":
         }).sort_values(by="importance", ascending=False)
 
         print(importance_df)
-
-
-
-                        
-
-
-
-
-    
