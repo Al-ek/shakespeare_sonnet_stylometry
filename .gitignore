@@ -2,6 +2,8 @@ venv
 data
 __pycache__
 model_dataset.csv
-sonnet_model.pkl
+xgb_sonnet_model.pkl
+rf_sonnet_model.pkl
+xgb_label_encoder.pkl
 
 

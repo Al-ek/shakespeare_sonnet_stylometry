@@ -1,4 +1,5 @@
 from pathlib import Path
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
 import matplotlib.pyplot as plt
 import re
 import nltk
@@ -10,7 +11,8 @@ import argparse
 import joblib
 import pandas
 import os
-import train
+import xgb_train
+import rf_train
 
 BY_AUTHOR_SONNET_CORPUS = Path("by_author_sonnet_corpus")
 MODEL_TRAINING_SONNETS = Path("model_training_sonnets")
@@ -116,7 +118,9 @@ if __name__ == "__main__":
                     add_to_csv(chi_results, delta_results, ngram_results, true_author)
 
     if args.mode == 'predict-author':
-        model = joblib.load("sonnet_model.pkl")
+        rf_model = joblib.load("rf_sonnet_model.pkl")
+        xgb_model = joblib.load("xgb_sonnet_model.pkl")
+        xgb_le = joblib.load("xgb_label_encoder.pkl")
         target_text_tokens = tokenize_target("Target.txt")
         target_text = Path("Target.txt").read_text(encoding="utf-8")
 
@@ -160,22 +164,33 @@ if __name__ == "__main__":
             row[f"ngram_6_{author}"] = ngram_results[author]["6gram"]
 
         X_new = pandas.DataFrame([row])
-        prediction = model.predict(X_new)[0]
 
-        print("Predicted author:", prediction)
+        rf_prediction = rf_model.predict(X_new)[0]
+        xgb_prediction_numeric = xgb_model.predict(X_new)[0]
+        xgb_prediction = xgb_le.inverse_transform([xgb_prediction_numeric])[0]
+
+        print("XGBoost Predicted author:", xgb_prediction)
+        print("Random Forest Predicted author:", rf_prediction)
         plt.show()
 
     if args.mode == 'train':
-        train.train()
+        rf_train.train()
+        xgb_train.train()
 
     if args.mode == 'evaluate-model':
-        model = joblib.load("sonnet_model.pkl")
-        correct = 0
-        count = 0
+        rf_model = joblib.load("rf_sonnet_model.pkl")
+        xgb_model = joblib.load("xgb_sonnet_model.pkl")
+        xgb_le = joblib.load("xgb_label_encoder.pkl")
+
+        rf_preds = []
+        xgb_preds = []
+        true_labels = []
+
         for author in MODEL_EVALUATION_SONNETS.iterdir():
             if author.is_dir():
                 true_author = author.name
-                print("Prediciting evaluation sonnets for", true_author)
+                print("Predicting evaluation sonnets for", true_author)
+
                 for file in author.iterdir():
                     target_text_tokens = tokenize_target(file)
                     target_text = Path(file).read_text(encoding="utf-8")
@@ -184,44 +199,69 @@ if __name__ == "__main__":
                     delta_results = delta.delta(authors, by_author_tokens, target_text_tokens)
                     ngram_results = ngram.ngram(authors, by_author, target_text)
 
+                    # Build feature row
                     row = {}
-                    for author in authors:
-                        row[f"chi2_{author}"] = chi_results[author]
-
-                    for author in authors:
-                        row[f"delta_{author}"] = delta_results[author]
-
-                    for author in authors:
-                        row[f"ngram_3_{author}"] = ngram_results[author]["3gram"]
-                        row[f"ngram_4_{author}"] = ngram_results[author]["4gram"]
-                        row[f"ngram_5_{author}"] = ngram_results[author]["5gram"]
-                        row[f"ngram_6_{author}"] = ngram_results[author]["6gram"]
+                    for a in authors:
+                        row[f"chi2_{a}"] = chi_results[a]
+                        row[f"delta_{a}"] = delta_results[a]
+                        row[f"ngram_3_{a}"] = ngram_results[a]["3gram"]
+                        row[f"ngram_4_{a}"] = ngram_results[a]["4gram"]
+                        row[f"ngram_5_{a}"] = ngram_results[a]["5gram"]
+                        row[f"ngram_6_{a}"] = ngram_results[a]["6gram"]
 
                     X_new = pandas.DataFrame([row])
-                    prediction = model.predict(X_new)[0]
 
-                    count += 1
-                    if prediction == true_author:
-                        correct += 1
-        acc = correct / count
-        print("Accuracy:", acc)
+                    # Reorder columns to match the model
+                    X_rf = X_new[rf_model.feature_names_in_]
+                    X_xgb = X_new[xgb_model.feature_names_in_]
 
-    if args.mode == 'model-parameters':
-        # Load trained model
-        model = joblib.load("sonnet_model.pkl")
+                    # Predictions
+                    rf_prediction = rf_model.predict(X_rf)[0]
+                    xgb_prediction_numeric = xgb_model.predict(X_xgb)[0]
+                    xgb_prediction = xgb_le.inverse_transform([xgb_prediction_numeric])[0]
 
-        # Load dataset to get feature names
-        df = pandas.read_csv("model_dataset.csv")
-        X = df.drop(columns=["true_author"])
+                    # Collect predictions
+                    rf_preds.append(rf_prediction)
+                    xgb_preds.append(xgb_prediction)
+                    true_labels.append(true_author)
 
-        # Get feature importances
-        importances = model.feature_importances_
-        feature_names = X.columns
+        # Compute accuracies
+        rf_acc = accuracy_score(true_labels, rf_preds)
+        xgb_acc = accuracy_score(true_labels, xgb_preds)
+        print("Random Forest Accuracy:", rf_acc)
+        print("XGBoost Accuracy:", xgb_acc)
 
-        # Create a sorted DataFrame
-        importance_df = pandas.DataFrame({
-            "feature": feature_names,
-            "importance": importances
-        }).sort_values(by="importance", ascending=False)
+        # Compute confusion matrices
+        rf_cm = confusion_matrix(true_labels, rf_preds, labels=authors)
+        xgb_cm = confusion_matrix(true_labels, xgb_preds, labels=authors)
 
-        print(importance_df)
+        # Display confusion matrices side by side
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        ConfusionMatrixDisplay(rf_cm, display_labels=authors).plot(ax=axes[0], cmap="Blues", colorbar=False)
+        axes[0].set_title("Random Forest Confusion Matrix")
+
+        ConfusionMatrixDisplay(xgb_cm, display_labels=authors).plot(ax=axes[1], cmap="Greens", colorbar=False)
+        axes[1].set_title("XGBoost Confusion Matrix")
+
+        plt.tight_layout()
+        plt.show()
+
+    # if args.mode == 'model-parameters':
+    #     # Load trained model
+    #     model = joblib.load("sonnet_model.pkl")
+
+    #     # Load dataset to get feature names
+    #     df = pandas.read_csv("model_dataset.csv")
+    #     X = df.drop(columns=["true_author"])
+
+    #     # Get feature importances
+    #     importances = model.feature_importances_
+    #     feature_names = X.columns
+
+    #     # Create a sorted DataFrame
+    #     importance_df = pandas.DataFrame({
+    #         "feature": feature_names,
+    #         "importance": importances
+    #     }).sort_values(by="importance", ascending=False)
+
+    #     print(importance_df)
