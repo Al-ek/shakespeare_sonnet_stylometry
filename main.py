@@ -26,7 +26,7 @@ roman_numerals = re.compile(r'^\s*[IVXLCDM]+\s*$', re.IGNORECASE | re.MULTILINE)
 character_count = -1
 
 authors = ("Gem", "Gemini", "Shakespeare",
-           "ChatGPT", "Claude", "Copilot", "Preplexity")
+           "ChatGPT", "Claude", "Copilot", "Perplexity")
 
 
 def tokenize_target(target_file):
